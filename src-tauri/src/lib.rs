@@ -284,7 +284,7 @@ fn register_context_menu_inner() {
     ];
     for ext in exts {
         // Remove the legacy v1 verbs so Explorer shows one extractor only.
-        for legacy in ["EliteExtratorExtractHere", "EliteExtratorExtractToFolder", "EliteExtratorListArchive"] {
+        for legacy in ["EliteExtratorHere", "EliteExtratorList", "EliteExtratorToFolder", "EliteExtratorExtractHere", "EliteExtratorExtractToFolder", "EliteExtratorListArchive"] {
             let legacy_key = format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell\\{legacy}");
             let _ = std::process::Command::new("reg").args(["delete", &legacy_key, "/f"]).output();
         }
