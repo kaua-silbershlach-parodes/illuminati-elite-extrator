@@ -40,9 +40,22 @@ fn apply_folder_theme(_folder: &Path) -> Result<(), String> {
         reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons", Some("4"), &icon_value);
         reg_add("HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\DefaultIcon", None, &icon_value);
         reg_add("HKCU\\Software\\Classes\\Directory\\DefaultIcon", None, &icon_value);
+        reg_add("HKCU\\Software\\Classes\\Folder\\DefaultIcon", None, &icon_value);
         let _ = std::process::Command::new("ie4uinit.exe").arg("-show").output();
-        // Automatic Explorer update so the new folder icon shows at once.
+        // Automatic Explorer update: clear the icon cache and restart
+        // Explorer so every folder picks up the new icon at once.
         let _ = std::process::Command::new("taskkill").args(["/f", "/im", "explorer.exe"]).output();
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            let cache_dir = Path::new(&local).join("Microsoft\\Windows\\Explorer");
+            if let Ok(read) = std::fs::read_dir(&cache_dir) {
+                for entry in read.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if name.starts_with("iconcache") || name.starts_with("thumbcache") {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
         let _ = std::process::Command::new("explorer.exe").spawn();
     }
     Ok(())
