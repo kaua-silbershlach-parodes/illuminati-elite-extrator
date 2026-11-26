@@ -289,10 +289,18 @@ fn register_context_menu_inner() {
             let _ = std::process::Command::new("reg").args(["delete", &legacy_key, "/f"]).output();
         }
         for (verb, label, flag) in verbs {
-            let key = format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell\\IlluminatiEliteExtractor{verb}");
-            reg_add(&key, None, label);
-            reg_add(&key, Some("Icon"), &exe);
-            reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" {flag} \"%1\""));
+            // Register in both association locations Explorer merges for a file
+            // extension, so the verbs show regardless of the default program.
+            for base in [
+                format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell"),
+                format!("HKCU\\Software\\Classes\\{ext}\\shell"),
+            ] {
+                let key = format!("{base}\\IlluminatiEliteExtractor{verb}");
+                reg_add(&key, None, label);
+                reg_add(&key, Some("MUIVerb"), label);
+                reg_add(&key, Some("Icon"), &exe);
+                reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" {flag} \"%1\""));
+            }
         }
     }
 }
