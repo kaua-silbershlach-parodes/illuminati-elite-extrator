@@ -12,12 +12,14 @@ Archive entries are checked before extraction. Entries that would escape the des
 
 ## Windows context menu
 
-On Windows the app registers Explorer context-menu entries for archive files:
+This is a context-menu extractor only. It does not open an application window. On Windows it registers Explorer context-menu entries for archive files:
 
 - Extract here with A Elite Estrangeira
 - Extract to folder with A Elite Estrangeira
-- List with A Elite Estrangeira
+- List with A Elite Estrangeira (writes a contents text file next to the archive and opens it in Notepad)
 
-## Updates
+Running the executable with no archive only registers the context menu again.
 
-Signed live updates are served from this repository's GitHub Releases feed.
+## Releases
+
+Installers are published in this repository's GitHub Releases.

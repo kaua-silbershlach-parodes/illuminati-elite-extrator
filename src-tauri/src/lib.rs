@@ -283,6 +283,11 @@ fn register_context_menu_inner() {
         ("ListArchive", "List with A Elite Estrangeira", "--list"),
     ];
     for ext in exts {
+        // Remove the legacy v1 verbs so Explorer shows one extractor only.
+        for legacy in ["EliteExtratorExtractHere", "EliteExtratorExtractToFolder", "EliteExtratorListArchive"] {
+            let legacy_key = format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell\\{legacy}");
+            let _ = std::process::Command::new("reg").args(["delete", &legacy_key, "/f"]).output();
+        }
         for (verb, label, flag) in verbs {
             let key = format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell\\IlluminatiEliteExtractor{verb}");
             reg_add(&key, None, label);
@@ -325,6 +330,31 @@ fn run_cli_if_requested() -> bool {
                 }
                 return true;
             }
+            "--list" => {
+                let p = Path::new(&pair[1]);
+                if let Ok(entries) = list_archive_inner(p) {
+                    let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "archive".to_string());
+                    let stem = stem.trim_end_matches(".tar").to_string();
+                    if let Some(parent) = p.parent() {
+                        let out = parent.join(format!("{stem}.contents.txt"));
+                        let mut text = String::new();
+                        for entry in entries {
+                            if entry.is_dir {
+                                text.push_str(&format!("[dir] {}\n", entry.name));
+                            } else {
+                                text.push_str(&format!("{} ({} bytes)\n", entry.name, entry.size));
+                            }
+                        }
+                        if std::fs::write(&out, text).is_ok() {
+                            #[cfg(windows)]
+                            {
+                                let _ = std::process::Command::new("notepad.exe").arg(&out).spawn();
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
             _ => {}
         }
     }
@@ -333,28 +363,13 @@ fn run_cli_if_requested() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Context-menu only: this executable never opens an application window.
+    // With no archive argument it only (re)registers the Explorer verbs.
     if run_cli_if_requested() {
         return;
     }
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![list_archive, extract_archive, extract_here, extract_to_folder, initial_path, register_context_menu])
-        .setup(|app| {
-            #[cfg(windows)]
-            register_context_menu_inner();
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-            Ok(())
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running the application");
+    #[cfg(windows)]
+    register_context_menu_inner();
 }
 
 #[cfg(test)]
