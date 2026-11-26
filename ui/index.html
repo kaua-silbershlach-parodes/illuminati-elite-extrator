@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Illuminati Elite Extractor</title>
+<title>Add to Archive</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,37 +11,42 @@
     <header class="brand">
       <img src="icon.png" alt="" class="brand-icon">
       <div>
-        <h1>Illuminati Elite Extractor</h1>
-        <p class="subtitle">A Elite Estrangeira archive extractor &middot; <span id="version">v&hellip;</span></p>
+        <h1 id="title">Add to Archive</h1>
+        <p class="subtitle">A Elite Estrangeira</p>
       </div>
     </header>
-
-    <section class="card">
-      <h2>Extractor</h2>
-      <p class="hint">Supports ZIP, 7Z, RAR, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, TAR.ZST, GZ, BZ2, XZ and ZST. Entries are checked before extraction so unsafe paths are blocked.</p>
+    <section class="card" id="add-card">
+      <label>Archive name</label>
+      <input id="archive-name" type="text">
+      <label>Archive format</label>
+      <select id="format">
+        <option value="elite" selected>ELITE (.elite) - A Elite Estrangeira</option>
+        <option value="zip">ZIP (.zip)</option>
+      </select>
+      <label>Compression level</label>
+      <select id="level">
+        <option value="1">1 - Fast</option>
+        <option value="3" selected>3 - Normal</option>
+        <option value="9">9 - Maximum</option>
+        <option value="19">19 - Ultra (ELITE)</option>
+      </select>
+      <label>Password (optional, ELITE only)</label>
+      <input id="password" type="password">
+      <label>Reenter password</label>
+      <input id="password2" type="password">
+      <p class="hint">ELITE uses Zstandard compression, SHA-256 integrity and AES-256-GCM encryption with Argon2id when a password is set.</p>
       <div class="actions">
-        <input id="archive-path" type="text" placeholder="Archive path" style="flex:1; min-width:220px;">
-        <button id="btn-browse">Browse</button>
+        <button id="btn-create">Create archive</button>
       </div>
-      <div class="actions">
-        <button id="btn-list">List contents</button>
-        <button id="btn-extract-here">Extract here</button>
-        <button id="btn-extract-folder">Extract to folder</button>
-        <button id="btn-context">Register context menu</button>
-      </div>
-      <pre id="extract-log" class="log"></pre>
+      <pre id="status" class="log"></pre>
     </section>
-
-    <section class="card">
-      <h2>Updates</h2>
-      <p class="state">State: <strong id="upd-state">idle</strong></p>
-      <div class="progress"><div id="upd-bar"></div></div>
+    <section class="card hidden" id="password-card">
+      <label>Archive password</label>
+      <input id="extract-password" type="password">
       <div class="actions">
-        <button id="btn-check">Check for updates</button>
-        <button id="btn-download" disabled>Download and install</button>
-        <button id="btn-restart" class="hidden">Restart to update</button>
+        <button id="btn-extract">Extract</button>
       </div>
-      <pre id="upd-log" class="log"></pre>
+      <pre id="password-status" class="log"></pre>
     </section>
   </main>
   <script src="app.js"></script>

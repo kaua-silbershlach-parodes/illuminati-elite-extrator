@@ -57,7 +57,7 @@ fn lower_name(path: &Path) -> String {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind { Zip, SevenZ, Rar, Tar, TarGz, TarBz2, TarXz, TarZst, Gz, Bz2, Xz, Zst }
+enum Kind { Zip, SevenZ, Rar, Tar, TarGz, TarBz2, TarXz, TarZst, Gz, Bz2, Xz, Zst, Elite }
 
 fn detect(path: &Path) -> Result<Kind, String> {
     let name = lower_name(path);
@@ -73,6 +73,7 @@ fn detect(path: &Path) -> Result<Kind, String> {
     if name.ends_with(".bz2") { return Ok(Kind::Bz2); }
     if name.ends_with(".xz") { return Ok(Kind::Xz); }
     if name.ends_with(".zst") { return Ok(Kind::Zst); }
+    if name.ends_with(".elite") { return Ok(Kind::Elite); }
     // Magic-byte fallback
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let mut magic = [0u8; 8];
@@ -84,6 +85,7 @@ fn detect(path: &Path) -> Result<Kind, String> {
     if magic.starts_with(b"BZh") { return Ok(Kind::Bz2); }
     if magic.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) { return Ok(Kind::Xz); }
     if magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) { return Ok(Kind::Zst); }
+    if magic.starts_with(b"ELITE1") { return Ok(Kind::Elite); }
     Err("Unsupported archive format".to_string())
 }
 
@@ -97,6 +99,149 @@ fn tar_reader(path: &Path, kind: Kind) -> Result<Box<dyn Read>, String> {
         Kind::TarZst => Box::new(zstd::Decoder::new(file).map_err(|e| e.to_string())?),
         _ => return Err("Not a tar archive".to_string()),
     })
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hex_decode(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() % 2 != 0 { return Err("Invalid hex data".to_string()); }
+    (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|e| e.to_string())).collect()
+}
+
+fn collect_files(source: &Path, base: &Path, out: &mut Vec<(PathBuf, PathBuf)>) -> Result<(), String> {
+    if source.is_file() {
+        let rel = source.file_name().map(PathBuf::from).ok_or("Invalid file name")?;
+        out.push((source.to_path_buf(), rel));
+        return Ok(());
+    }
+    let mut stack = vec![source.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rel_dir = dir.strip_prefix(base).map_err(|e| e.to_string())?.to_path_buf();
+        out.push((dir.clone(), rel_dir));
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.is_file() {
+                let rel = path.strip_prefix(base).map_err(|e| e.to_string())?.to_path_buf();
+                out.push((path, rel));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn build_tar_bytes(source: &Path) -> Result<Vec<u8>, String> {
+    let base = source.parent().unwrap_or_else(|| Path::new("."));
+    let mut files = Vec::new();
+    collect_files(source, base, &mut files)?;
+    let mut builder = tar::Builder::new(Vec::new());
+    for (abs, rel) in files {
+        builder.append_path_with_name(&abs, &rel).map_err(|e| e.to_string())?;
+    }
+    builder.into_inner().map_err(|e| e.to_string())
+}
+
+fn create_elite_archive(source: &Path, dest: &Path, level: i32, password: &str) -> Result<(), String> {
+    use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
+    use rand::RngCore;
+    let tar_bytes = build_tar_bytes(source)?;
+    let plain_sha = format!("{:x}", Sha256::digest(&tar_bytes));
+    let compressed = zstd::encode_all(&tar_bytes[..], level).map_err(|e| e.to_string())?;
+    let encrypted = !password.is_empty();
+    let (payload, salt_hex, nonce_hex) = if encrypted {
+        let mut salt = [0u8; 16];
+        let mut nonce = [0u8; 12];
+        rand::rngs::OsRng.fill_bytes(&mut salt);
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let mut key = [0u8; 32];
+        argon2::Argon2::default().hash_password_into(password.as_bytes(), &salt, &mut key).map_err(|e| e.to_string())?;
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+        let ct = cipher.encrypt(Nonce::from_slice(&nonce), compressed.as_ref()).map_err(|e| e.to_string())?;
+        (ct, hex_encode(&salt), hex_encode(&nonce))
+    } else {
+        (compressed, String::new(), String::new())
+    };
+    let header = serde_json::json!({
+        "format": "A Elite Estrangeira Archive",
+        "version": 1,
+        "compression": "zstd",
+        "level": level,
+        "encrypted": encrypted,
+        "salt": salt_hex,
+        "nonce": nonce_hex,
+        "sha256": plain_sha,
+    }).to_string();
+    let mut out = Vec::new();
+    out.extend_from_slice(b"ELITE1\0\0");
+    out.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(&payload);
+    std::fs::write(dest, out).map_err(|e| e.to_string())
+}
+
+fn read_elite_tar_bytes(path: &Path, password: Option<&str>) -> Result<Vec<u8>, String> {
+    use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
+    let data = std::fs::read(path).map_err(|e| e.to_string())?;
+    if data.len() < 12 || !data.starts_with(b"ELITE1") { return Err("Invalid ELITE archive".to_string()); }
+    let header_len = u32::from_le_bytes(data[8..12].try_into().map_err(|_| "Invalid ELITE header")?) as usize;
+    if data.len() < 12 + header_len { return Err("Invalid ELITE header".to_string()); }
+    let header: serde_json::Value = serde_json::from_slice(&data[12..12 + header_len]).map_err(|e| e.to_string())?;
+    let payload = &data[12 + header_len..];
+    let compressed = if header["encrypted"].as_bool().unwrap_or(false) {
+        let password = password.filter(|p| !p.is_empty()).ok_or("Password required")?;
+        let salt = hex_decode(header["salt"].as_str().unwrap_or_default())?;
+        let nonce = hex_decode(header["nonce"].as_str().unwrap_or_default())?;
+        let mut key = [0u8; 32];
+        argon2::Argon2::default().hash_password_into(password.as_bytes(), &salt, &mut key).map_err(|e| e.to_string())?;
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+        cipher.decrypt(Nonce::from_slice(&nonce), payload).map_err(|_| "Invalid password or corrupted archive".to_string())?
+    } else {
+        payload.to_vec()
+    };
+    let tar_bytes = zstd::decode_all(&compressed[..]).map_err(|e| e.to_string())?;
+    let expected = header["sha256"].as_str().unwrap_or_default();
+    let actual = format!("{:x}", Sha256::digest(&tar_bytes));
+    if !expected.is_empty() && expected != actual { return Err("ELITE archive integrity check failed".to_string()); }
+    Ok(tar_bytes)
+}
+
+fn elite_is_encrypted(path: &Path) -> bool {
+    if let Ok(data) = std::fs::read(path) {
+        if data.len() >= 12 && data.starts_with(b"ELITE1") {
+            let header_len = u32::from_le_bytes(data[8..12].try_into().unwrap_or([0; 4])) as usize;
+            if data.len() >= 12 + header_len {
+                if let Ok(header) = serde_json::from_slice::<serde_json::Value>(&data[12..12 + header_len]) {
+                    return header["encrypted"].as_bool().unwrap_or(false);
+                }
+            }
+        }
+    }
+    false
+}
+
+fn create_zip_archive(source: &Path, dest: &Path, level: i32) -> Result<(), String> {
+    let base = source.parent().unwrap_or_else(|| Path::new("."));
+    let mut files = Vec::new();
+    collect_files(source, base, &mut files)?;
+    let file = File::create(dest).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).compression_level(Some(level.clamp(0, 9) as i64));
+    for (abs, rel) in files {
+        let name = rel.to_string_lossy().replace('\\', "/");
+        if abs.is_dir() {
+            zip.add_directory(format!("{name}/"), options).map_err(|e| e.to_string())?;
+        } else {
+            zip.start_file(name, options).map_err(|e| e.to_string())?;
+            let mut input = File::open(&abs).map_err(|e| e.to_string())?;
+            io::copy(&mut input, &mut zip).map_err(|e| e.to_string())?;
+        }
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn list_archive_inner(path: &Path) -> Result<Vec<EntryInfo>, String> {
@@ -136,11 +281,24 @@ fn list_archive_inner(path: &Path) -> Result<Vec<EntryInfo>, String> {
             let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
             out.push(EntryInfo { name: stem, size: 0, is_dir: false });
         }
+        Kind::Elite => {
+            let tar_bytes = read_elite_tar_bytes(path, None)?;
+            let mut archive = tar::Archive::new(io::Cursor::new(tar_bytes));
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let name = entry.path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+                out.push(EntryInfo { name, size: entry.size(), is_dir: entry.header().entry_type().is_dir() });
+            }
+        }
     }
     Ok(out)
 }
 
 fn extract_archive_inner(path: &Path, dest: &Path) -> Result<Vec<ExtractedInfo>, String> {
+    extract_archive_inner_with_password(path, dest, None)
+}
+
+fn extract_archive_inner_with_password(path: &Path, dest: &Path, password: Option<&str>) -> Result<Vec<ExtractedInfo>, String> {
     let kind = detect(path)?;
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
@@ -219,6 +377,21 @@ fn extract_archive_inner(path: &Path, dest: &Path) -> Result<Vec<ExtractedInfo>,
             };
             out.push(ExtractedInfo { path: target.to_string_lossy().to_string(), size, sha256: sha256_hex(&target)? });
         }
+        Kind::Elite => {
+            let tar_bytes = read_elite_tar_bytes(path, password)?;
+            let mut archive = tar::Archive::new(io::Cursor::new(tar_bytes));
+            for entry in archive.entries().map_err(|e| e.to_string())? {
+                let mut entry = entry.map_err(|e| e.to_string())?;
+                let name = entry.path().map_err(|e| e.to_string())?.to_string_lossy().to_string();
+                let target = safe_join(dest, &name)?;
+                if entry.header().entry_type().is_dir() {
+                    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+                } else {
+                    let size = write_stream(&mut entry, &target)?;
+                    out.push(ExtractedInfo { path: target.to_string_lossy().to_string(), size, sha256: sha256_hex(&target)? });
+                }
+            }
+        }
     }
     Ok(out)
 }
@@ -249,6 +422,68 @@ fn extract_to_folder(path: String) -> Result<Vec<ExtractedInfo>, String> {
     extract_archive_inner(p, &parent.join(stem))
 }
 
+#[derive(Serialize)]
+struct DialogContext {
+    mode: String,
+    source: String,
+    parent: String,
+    suggested_name: String,
+}
+
+#[tauri::command]
+fn dialog_context() -> DialogContext {
+    let args: Vec<String> = std::env::args().collect();
+    let mut mode = "add".to_string();
+    let mut source = String::new();
+    for pair in args.windows(2) {
+        if pair[0] == "--add" {
+            mode = "add".to_string();
+            source = pair[1].clone();
+        } else if pair[0] == "--extract-here" || pair[0] == "--extract-to" {
+            mode = "password".to_string();
+            source = pair[1].clone();
+        }
+    }
+    let path = Path::new(&source);
+    let parent = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let suggested_name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Archive".to_string());
+    DialogContext { mode, source, parent, suggested_name }
+}
+
+#[tauri::command]
+fn create_archive(source: String, dest: String, format: String, level: i32, password: String) -> Result<String, String> {
+    let source = Path::new(&source);
+    let dest = Path::new(&dest);
+    match format.as_str() {
+        "elite" => create_elite_archive(source, dest, level, &password)?,
+        "zip" => create_zip_archive(source, dest, level)?,
+        _ => return Err("Unsupported archive format".to_string()),
+    }
+    let size = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    Ok(format!("Created {} ({} bytes)", dest.to_string_lossy(), size))
+}
+
+#[tauri::command]
+fn extract_with_password(password: String) -> Result<String, String> {
+    let args: Vec<String> = std::env::args().collect();
+    for pair in args.windows(2) {
+        let p = Path::new(&pair[1]);
+        if pair[0] == "--extract-here" {
+            let parent = p.parent().ok_or("Archive has no parent folder")?;
+            let files = extract_archive_inner_with_password(p, parent, Some(&password))?;
+            return Ok(format!("Extracted {} files", files.len()));
+        }
+        if pair[0] == "--extract-to" {
+            let parent = p.parent().ok_or("Archive has no parent folder")?;
+            let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "extracted".to_string());
+            let stem = stem.trim_end_matches(".tar").to_string();
+            let files = extract_archive_inner_with_password(p, &parent.join(stem), Some(&password))?;
+            return Ok(format!("Extracted {} files", files.len()));
+        }
+    }
+    Err("No extraction request found".to_string())
+}
+
 #[tauri::command]
 fn initial_path() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
@@ -276,7 +511,7 @@ fn reg_add(key: &str, value_name: Option<&str>, data: &str) {
 #[cfg(windows)]
 fn register_context_menu_inner() {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let exts = [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst", ".tgz"];
+    let exts = [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst", ".tgz", ".elite"];
     let verbs = [
         ("ExtractHere", "Extract here with A Elite Estrangeira", "--extract-here"),
         ("ExtractToFolder", "Extract to folder with A Elite Estrangeira", "--extract-to"),
@@ -303,6 +538,19 @@ fn register_context_menu_inner() {
             }
         }
     }
+    // Add to archive for any file and for folders.
+    for base in ["HKCU\\Software\\Classes\\*\\shell", "HKCU\\Software\\Classes\\Directory\\shell"] {
+        let key = format!("{base}\\IlluminatiEliteExtractorAddToArchive");
+        reg_add(&key, None, "Add to archive with A Elite Estrangeira");
+        reg_add(&key, Some("MUIVerb"), "Add to archive with A Elite Estrangeira");
+        reg_add(&key, Some("Icon"), &exe);
+        reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" --add \"%1\""));
+    }
+    let bg_add = "HKCU\\Software\\Classes\\Directory\\Background\\shell\\IlluminatiEliteExtractorAddToArchive";
+    reg_add(bg_add, None, "Add to archive with A Elite Estrangeira");
+    reg_add(bg_add, Some("MUIVerb"), "Add to archive with A Elite Estrangeira");
+    reg_add(bg_add, Some("Icon"), &exe);
+    reg_add(&format!("{bg_add}\\command"), None, &format!("\"{exe}\" --add \"%V\""));
     // Folders too, like 7-Zip: on a folder the verbs act on the archives
     // directly inside it. Directory\Background receives the folder as %V.
     for (verb, label, flag) in verbs {
@@ -432,9 +680,37 @@ fn run_cli_if_requested() -> bool {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+fn needs_window() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    for pair in args.windows(2) {
+        if pair[0] == "--add" {
+            return true;
+        }
+        if (pair[0] == "--extract-here" || pair[0] == "--extract-to") && elite_is_encrypted(Path::new(&pair[1])) {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn run() {
-    // Context-menu only: this executable never opens an application window.
-    // With no archive argument it only (re)registers the Explorer verbs.
+    // Context-menu only: extraction never opens an application window. The
+    // only windows are the Add to Archive settings dialog and the password
+    // prompt for encrypted ELITE archives.
+    if needs_window() {
+        tauri::Builder::default()
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_process::init())
+            .invoke_handler(tauri::generate_handler![dialog_context, create_archive, extract_with_password, list_archive, extract_archive, extract_here, extract_to_folder, initial_path, register_context_menu])
+            .setup(|_app| {
+                #[cfg(windows)]
+                register_context_menu_inner();
+                Ok(())
+            })
+            .run(tauri::generate_context!())
+            .expect("error while running the dialog");
+        return;
+    }
     if run_cli_if_requested() {
         return;
     }
@@ -474,6 +750,43 @@ mod tests {
         let result = extract_archive_inner(&archive_path, &dest);
         assert!(result.is_err());
         assert!(!dir.join("evil.txt").exists());
+    }
+
+    #[test]
+    fn elite_roundtrip_and_encrypted() {
+        let dir = temp_dir("elite");
+        let src = dir.join("Template");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("hello.txt"), b"hello elite\n").unwrap();
+        let plain = dir.join("Template.elite");
+        create_elite_archive(&src, &plain, 3, "").unwrap();
+        let listed = list_archive_inner(&plain).unwrap();
+        assert!(listed.iter().any(|e| e.name.ends_with("hello.txt")));
+        let out = dir.join("out");
+        let files = extract_archive_inner(&plain, &out).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(std::fs::read_to_string(out.join("Template/hello.txt")).unwrap(), "hello elite\n");
+
+        let encrypted = dir.join("Secret.elite");
+        create_elite_archive(&src, &encrypted, 3, "correct horse").unwrap();
+        assert!(elite_is_encrypted(&encrypted));
+        assert!(extract_archive_inner(&encrypted, &dir.join("nope")).is_err());
+        let out2 = dir.join("out2");
+        let files2 = extract_archive_inner_with_password(&encrypted, &out2, Some("correct horse")).unwrap();
+        assert_eq!(files2.len(), 1);
+    }
+
+    #[test]
+    fn zip_create_roundtrip() {
+        let dir = temp_dir("zipcreate");
+        let src = dir.join("Template");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("hello.txt"), b"hello elite\n").unwrap();
+        let archive = dir.join("Template.zip");
+        create_zip_archive(&src, &archive, 6).unwrap();
+        let out = dir.join("out");
+        let files = extract_archive_inner(&archive, &out).unwrap();
+        assert_eq!(files.len(), 1);
     }
 
     #[test]

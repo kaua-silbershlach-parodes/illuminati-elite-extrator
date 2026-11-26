@@ -30,6 +30,9 @@ bzip2 = "0.4"
 xz2 = "0.1"
 zstd = "0.13"
 sha2 = "0.10"
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
 
 [profile.release]
 lto = true
