@@ -30,18 +30,16 @@ fn folder_theme_icon_path() -> PathBuf {
     path
 }
 
-fn apply_folder_theme(folder: &Path) -> Result<(), String> {
-    if !folder.is_dir() {
-        return Err("Folder theme target is not a folder".to_string());
-    }
+fn apply_folder_theme(_folder: &Path) -> Result<(), String> {
+    // System-wide: replace the default Windows folder icon for the user.
     let icon = folder_theme_icon_path();
-    let ini = folder.join("desktop.ini");
-    let content = format!("[.ShellClassInfo]\r\nIconResource={},0\r\nIconFile={}\r\nIconIndex=0\r\n", icon.to_string_lossy(), icon.to_string_lossy());
-    std::fs::write(&ini, content).map_err(|e| e.to_string())?;
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("attrib").args(["+h", "+s", &ini.to_string_lossy()]).output();
-        let _ = std::process::Command::new("attrib").args(["+r", &folder.to_string_lossy()]).output();
+        let icon_value = format!("{},0", icon.to_string_lossy());
+        reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons", Some("3"), &icon_value);
+        reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons", Some("4"), &icon_value);
+        reg_add("HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\DefaultIcon", None, &icon_value);
+        reg_add("HKCU\\Software\\Classes\\Directory\\DefaultIcon", None, &icon_value);
         let _ = std::process::Command::new("ie4uinit.exe").arg("-show").output();
     }
     Ok(())
@@ -848,9 +846,8 @@ mod tests {
         let folder = dir.join("Themed");
         std::fs::create_dir_all(&folder).unwrap();
         apply_folder_theme(&folder).unwrap();
-        let ini = std::fs::read_to_string(folder.join("desktop.ini")).unwrap();
-        assert!(ini.contains("IconResource="));
-        assert!(ini.contains("folder-silver-graphite.ico"));
+        let icon = folder_theme_icon_path();
+        assert_eq!(std::fs::metadata(&icon).unwrap().len(), FOLDER_THEME_ICON.len() as u64);
     }
 
     #[test]
