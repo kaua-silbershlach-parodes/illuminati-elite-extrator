@@ -18,6 +18,34 @@ pub struct ExtractedInfo {
     sha256: String,
 }
 
+const FOLDER_THEME_ICON: &[u8] = include_bytes!("../icons/folder-silver-graphite.ico");
+
+fn folder_theme_icon_path() -> PathBuf {
+    let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."));
+    let path = dir.join("folder-silver-graphite.ico");
+    let needs_write = std::fs::metadata(&path).map(|m| m.len() != FOLDER_THEME_ICON.len() as u64).unwrap_or(true);
+    if needs_write {
+        let _ = std::fs::write(&path, FOLDER_THEME_ICON);
+    }
+    path
+}
+
+fn apply_folder_theme(folder: &Path) -> Result<(), String> {
+    if !folder.is_dir() {
+        return Err("Folder theme target is not a folder".to_string());
+    }
+    let icon = folder_theme_icon_path();
+    let ini = folder.join("desktop.ini");
+    let content = format!("[.ShellClassInfo]\r\nIconResource={},0\r\nIconFile={}\r\nIconIndex=0\r\n", icon.to_string_lossy(), icon.to_string_lossy());
+    std::fs::write(&ini, content).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("attrib").args(["+h", "+s", &ini.to_string_lossy()]).output();
+        let _ = std::process::Command::new("attrib").args(["+r", &folder.to_string_lossy()]).output();
+    }
+    Ok(())
+}
+
 fn safe_join(dest: &Path, entry: &str) -> Result<PathBuf, String> {
     let normalized = entry.replace('\\', "/");
     let rel = Path::new(&normalized);
@@ -549,6 +577,15 @@ fn register_context_menu_inner() {
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon"), None, &format!("{exe},0"));
     reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.elite\\OpenWithProgids", Some(prog_id), "");
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\shell\\open\\command"), None, &format!("\"{exe}\" --list \"%1\""));
+    // Folder theme: Silver Graphite (no-text version), first theme.
+    let _ = folder_theme_icon_path();
+    for (base, arg) in [("HKCU\\Software\\Classes\\Directory\\shell", "%1"), ("HKCU\\Software\\Classes\\Directory\\Background\\shell", "%V")] {
+        let key = format!("{base}\\IlluminatiEliteExtractorFolderThemeSilverGraphite");
+        reg_add(&key, None, "Folder theme: Silver Graphite");
+        reg_add(&key, Some("MUIVerb"), "Folder theme: Silver Graphite");
+        reg_add(&key, Some("Icon"), &exe);
+        reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" --folder-theme \"{arg}\""));
+    }
     // Add to archive for any file and for folders.
     for base in ["HKCU\\Software\\Classes\\*\\shell", "HKCU\\Software\\Classes\\Directory\\shell"] {
         let key = format!("{base}\\IlluminatiEliteExtractorAddToArchive");
@@ -595,6 +632,10 @@ fn run_cli_if_requested() -> bool {
     let args: Vec<String> = std::env::args().collect();
     for pair in args.windows(2) {
         match pair[0].as_str() {
+            "--folder-theme" => {
+                let _ = apply_folder_theme(Path::new(&pair[1]));
+                return true;
+            }
             "--extract-here" => {
                 let p = Path::new(&pair[1]);
                 if p.is_dir() {
@@ -798,6 +839,17 @@ mod tests {
         let out = dir.join("out");
         let files = extract_archive_inner(&archive, &out).unwrap();
         assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn folder_theme_writes_desktop_ini() {
+        let dir = temp_dir("theme");
+        let folder = dir.join("Themed");
+        std::fs::create_dir_all(&folder).unwrap();
+        apply_folder_theme(&folder).unwrap();
+        let ini = std::fs::read_to_string(folder.join("desktop.ini")).unwrap();
+        assert!(ini.contains("IconResource="));
+        assert!(ini.contains("folder-silver-graphite.ico"));
     }
 
     #[test]
