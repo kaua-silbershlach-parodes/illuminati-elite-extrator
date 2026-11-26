@@ -303,6 +303,20 @@ fn register_context_menu_inner() {
             }
         }
     }
+    // Folders too, like 7-Zip: on a folder the verbs act on the archives
+    // directly inside it. Directory\Background receives the folder as %V.
+    for (verb, label, flag) in verbs {
+        let key = format!("HKCU\\Software\\Classes\\Directory\\shell\\IlluminatiEliteExtractor{verb}");
+        reg_add(&key, None, label);
+        reg_add(&key, Some("MUIVerb"), label);
+        reg_add(&key, Some("Icon"), &exe);
+        reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" {flag} \"%1\""));
+        let bg_key = format!("HKCU\\Software\\Classes\\Directory\\Background\\shell\\IlluminatiEliteExtractor{verb}");
+        reg_add(&bg_key, None, label);
+        reg_add(&bg_key, Some("MUIVerb"), label);
+        reg_add(&bg_key, Some("Icon"), &exe);
+        reg_add(&format!("{bg_key}\\command"), None, &format!("\"{exe}\" {flag} \"%V\""));
+    }
 }
 
 #[tauri::command]
@@ -324,14 +338,34 @@ fn run_cli_if_requested() -> bool {
         match pair[0].as_str() {
             "--extract-here" => {
                 let p = Path::new(&pair[1]);
-                if let Some(parent) = p.parent() {
+                if p.is_dir() {
+                    if let Ok(read) = std::fs::read_dir(p) {
+                        for entry in read.flatten() {
+                            let file = entry.path();
+                            if file.is_file() && list_archive_inner(&file).is_ok() {
+                                let _ = extract_archive_inner(&file, p);
+                            }
+                        }
+                    }
+                } else if let Some(parent) = p.parent() {
                     let _ = extract_archive_inner(p, parent);
                 }
                 return true;
             }
             "--extract-to" => {
                 let p = Path::new(&pair[1]);
-                if let Some(parent) = p.parent() {
+                if p.is_dir() {
+                    if let Ok(read) = std::fs::read_dir(p) {
+                        for entry in read.flatten() {
+                            let file = entry.path();
+                            if file.is_file() && list_archive_inner(&file).is_ok() {
+                                let stem = file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "extracted".to_string());
+                                let stem = stem.trim_end_matches(".tar").to_string();
+                                let _ = extract_archive_inner(&file, &p.join(stem));
+                            }
+                        }
+                    }
+                } else if let Some(parent) = p.parent() {
                     let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "extracted".to_string());
                     let stem = stem.trim_end_matches(".tar").to_string();
                     let _ = extract_archive_inner(p, &parent.join(stem));
@@ -340,6 +374,34 @@ fn run_cli_if_requested() -> bool {
             }
             "--list" => {
                 let p = Path::new(&pair[1]);
+                if p.is_dir() {
+                    let mut text = String::new();
+                    if let Ok(read) = std::fs::read_dir(p) {
+                        for entry in read.flatten() {
+                            let file = entry.path();
+                            if file.is_file() {
+                                if let Ok(entries) = list_archive_inner(&file) {
+                                    text.push_str(&format!("{}\n", file.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
+                                    for e in entries {
+                                        if e.is_dir {
+                                            text.push_str(&format!("  [dir] {}\n", e.name));
+                                        } else {
+                                            text.push_str(&format!("  {} ({} bytes)\n", e.name, e.size));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let out = p.join("archives.contents.txt");
+                    if std::fs::write(&out, text).is_ok() {
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("notepad.exe").arg(&out).spawn();
+                        }
+                    }
+                    return true;
+                }
                 if let Ok(entries) = list_archive_inner(p) {
                     let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "archive".to_string());
                     let stem = stem.trim_end_matches(".tar").to_string();
