@@ -545,6 +545,7 @@ fn register_context_menu_inner() {
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}"), Some("FriendlyTypeName"), "ELITE Archive");
     reg_add("HKCU\\Software\\Classes\\.elite", Some("Content Type"), "application/x-elite-archive");
     reg_add("HKCU\\Software\\Classes\\.elite", Some("PerceivedType"), "compressed");
+    reg_add("HKCU\\Software\\Classes\\.elite", Some("AlwaysShowExt"), "");
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon"), None, &format!("{exe},0"));
     reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.elite\\OpenWithProgids", Some(prog_id), "");
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\shell\\open\\command"), None, &format!("\"{exe}\" --list \"%1\""));
