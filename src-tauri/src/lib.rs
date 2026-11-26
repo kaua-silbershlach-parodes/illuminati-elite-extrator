@@ -542,7 +542,8 @@ fn register_context_menu_inner() {
     let prog_id = "AEliteEstrangeira.EliteArchive";
     reg_add("HKCU\\Software\\Classes\\.elite", None, prog_id);
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}"), None, "ELITE Archive");
-    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon"), None, &format!("\"{exe}\",0"));
+    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon"), None, &format!("{exe},0"));
+    reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.elite\\OpenWithProgids", Some(prog_id), "");
     reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\shell\\open\\command"), None, &format!("\"{exe}\" --list \"%1\""));
     // Add to archive for any file and for folders.
     for base in ["HKCU\\Software\\Classes\\*\\shell", "HKCU\\Software\\Classes\\Directory\\shell"] {
