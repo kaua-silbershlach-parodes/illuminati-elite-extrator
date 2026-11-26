@@ -42,6 +42,7 @@ fn apply_folder_theme(folder: &Path) -> Result<(), String> {
     {
         let _ = std::process::Command::new("attrib").args(["+h", "+s", &ini.to_string_lossy()]).output();
         let _ = std::process::Command::new("attrib").args(["+r", &folder.to_string_lossy()]).output();
+        let _ = std::process::Command::new("ie4uinit.exe").arg("-show").output();
     }
     Ok(())
 }
