@@ -121,10 +121,41 @@ fn lower_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
 
+fn has_house_magic(path: &Path) -> bool {
+    if let Ok(mut f) = File::open(path) {
+        let mut magic = [0u8; 8];
+        if f.read(&mut magic).is_ok() {
+            return magic.starts_with(b"ELITE1");
+        }
+    }
+    false
+}
+
+fn normalize_custom_extension(input: &str) -> Result<String, String> {
+    let ext = input.trim().trim_start_matches('.').to_lowercase();
+    if ext.is_empty() || ext.len() > 32 {
+        return Err("Custom extension must be 1 to 32 characters".to_string());
+    }
+    let mut chars = ext.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphanumeric() {
+        return Err("Custom extension must start with a letter or number".to_string());
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+        return Err("Custom extension may only contain letters, numbers, dot, underscore, or hyphen".to_string());
+    }
+    const RESERVED: [&str; 19] = ["zip", "7z", "rar", "tar", "gz", "bz2", "xz", "zst", "tgz", "tbz2", "txz", "illuminati", "elite", "jar", "war", "epub", "docx", "xlsx", "pptx"];
+    if RESERVED.contains(&ext.as_str()) {
+        return Err("Custom extension is reserved for a built-in format".to_string());
+    }
+    Ok(ext)
+}
+
 #[derive(Clone, Copy, PartialEq)]
-enum Kind { Zip, SevenZ, Rar, Tar, TarGz, TarBz2, TarXz, TarZst, Gz, Bz2, Xz, Zst, Elite }
+enum Kind { Zip, SevenZ, Rar, Tar, TarGz, TarBz2, TarXz, TarZst, Gz, Bz2, Xz, Zst, Illuminati }
 
 fn detect(path: &Path) -> Result<Kind, String> {
+    if has_house_magic(path) { return Ok(Kind::Illuminati); }
     let name = lower_name(path);
     if name.ends_with(".tar.gz") || name.ends_with(".tgz") { return Ok(Kind::TarGz); }
     if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") { return Ok(Kind::TarBz2); }
@@ -138,7 +169,7 @@ fn detect(path: &Path) -> Result<Kind, String> {
     if name.ends_with(".bz2") { return Ok(Kind::Bz2); }
     if name.ends_with(".xz") { return Ok(Kind::Xz); }
     if name.ends_with(".zst") { return Ok(Kind::Zst); }
-    if name.ends_with(".elite") { return Ok(Kind::Elite); }
+    if name.ends_with(".illuminati") || name.ends_with(".elite") { return Ok(Kind::Illuminati); }
     // Magic-byte fallback
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let mut magic = [0u8; 8];
@@ -150,7 +181,7 @@ fn detect(path: &Path) -> Result<Kind, String> {
     if magic.starts_with(b"BZh") { return Ok(Kind::Bz2); }
     if magic.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) { return Ok(Kind::Xz); }
     if magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) { return Ok(Kind::Zst); }
-    if magic.starts_with(b"ELITE1") { return Ok(Kind::Elite); }
+    if magic.starts_with(b"ELITE1") { return Ok(Kind::Illuminati); }
     Err("Unsupported archive format".to_string())
 }
 
@@ -210,7 +241,7 @@ fn build_tar_bytes(source: &Path) -> Result<Vec<u8>, String> {
     builder.into_inner().map_err(|e| e.to_string())
 }
 
-fn create_elite_archive(source: &Path, dest: &Path, level: i32, password: &str) -> Result<(), String> {
+fn create_illuminati_archive(source: &Path, dest: &Path, level: i32, password: &str) -> Result<(), String> {
     use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
     use rand::RngCore;
     let tar_bytes = build_tar_bytes(source)?;
@@ -231,7 +262,7 @@ fn create_elite_archive(source: &Path, dest: &Path, level: i32, password: &str) 
         (compressed, String::new(), String::new())
     };
     let header = serde_json::json!({
-        "format": "A Elite Estrangeira Archive",
+        "format": "Illuminati Archive",
         "version": 1,
         "compression": "zstd",
         "level": level,
@@ -248,12 +279,12 @@ fn create_elite_archive(source: &Path, dest: &Path, level: i32, password: &str) 
     std::fs::write(dest, out).map_err(|e| e.to_string())
 }
 
-fn read_elite_tar_bytes(path: &Path, password: Option<&str>) -> Result<Vec<u8>, String> {
+fn read_illuminati_tar_bytes(path: &Path, password: Option<&str>) -> Result<Vec<u8>, String> {
     use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Key, Nonce};
     let data = std::fs::read(path).map_err(|e| e.to_string())?;
-    if data.len() < 12 || !data.starts_with(b"ELITE1") { return Err("Invalid ELITE archive".to_string()); }
-    let header_len = u32::from_le_bytes(data[8..12].try_into().map_err(|_| "Invalid ELITE header")?) as usize;
-    if data.len() < 12 + header_len { return Err("Invalid ELITE header".to_string()); }
+    if data.len() < 12 || !data.starts_with(b"ELITE1") { return Err("Invalid Illuminati archive".to_string()); }
+    let header_len = u32::from_le_bytes(data[8..12].try_into().map_err(|_| "Invalid Illuminati header")?) as usize;
+    if data.len() < 12 + header_len { return Err("Invalid Illuminati header".to_string()); }
     let header: serde_json::Value = serde_json::from_slice(&data[12..12 + header_len]).map_err(|e| e.to_string())?;
     let payload = &data[12 + header_len..];
     let compressed = if header["encrypted"].as_bool().unwrap_or(false) {
@@ -270,11 +301,11 @@ fn read_elite_tar_bytes(path: &Path, password: Option<&str>) -> Result<Vec<u8>, 
     let tar_bytes = zstd::decode_all(&compressed[..]).map_err(|e| e.to_string())?;
     let expected = header["sha256"].as_str().unwrap_or_default();
     let actual = format!("{:x}", Sha256::digest(&tar_bytes));
-    if !expected.is_empty() && expected != actual { return Err("ELITE archive integrity check failed".to_string()); }
+    if !expected.is_empty() && expected != actual { return Err("Illuminati archive integrity check failed".to_string()); }
     Ok(tar_bytes)
 }
 
-fn elite_is_encrypted(path: &Path) -> bool {
+fn illuminati_is_encrypted(path: &Path) -> bool {
     if let Ok(data) = std::fs::read(path) {
         if data.len() >= 12 && data.starts_with(b"ELITE1") {
             let header_len = u32::from_le_bytes(data[8..12].try_into().unwrap_or([0; 4])) as usize;
@@ -346,8 +377,8 @@ fn list_archive_inner(path: &Path) -> Result<Vec<EntryInfo>, String> {
             let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
             out.push(EntryInfo { name: stem, size: 0, is_dir: false });
         }
-        Kind::Elite => {
-            let tar_bytes = read_elite_tar_bytes(path, None)?;
+        Kind::Illuminati => {
+            let tar_bytes = read_illuminati_tar_bytes(path, None)?;
             let mut archive = tar::Archive::new(io::Cursor::new(tar_bytes));
             for entry in archive.entries().map_err(|e| e.to_string())? {
                 let entry = entry.map_err(|e| e.to_string())?;
@@ -442,8 +473,8 @@ fn extract_archive_inner_with_password(path: &Path, dest: &Path, password: Optio
             };
             out.push(ExtractedInfo { path: target.to_string_lossy().to_string(), size, sha256: sha256_hex(&target)? });
         }
-        Kind::Elite => {
-            let tar_bytes = read_elite_tar_bytes(path, password)?;
+        Kind::Illuminati => {
+            let tar_bytes = read_illuminati_tar_bytes(path, password)?;
             let mut archive = tar::Archive::new(io::Cursor::new(tar_bytes));
             for entry in archive.entries().map_err(|e| e.to_string())? {
                 let mut entry = entry.map_err(|e| e.to_string())?;
@@ -516,16 +547,38 @@ fn dialog_context() -> DialogContext {
 }
 
 #[tauri::command]
-fn create_archive(source: String, dest: String, format: String, level: i32, password: String) -> Result<String, String> {
+fn create_archive(source: String, dest: String, format: String, level: i32, password: String, custom_extension: Option<String>, register_custom: bool) -> Result<String, String> {
     let source = Path::new(&source);
     let dest = Path::new(&dest);
-    match format.as_str() {
-        "elite" => create_elite_archive(source, dest, level, &password)?,
-        "zip" => create_zip_archive(source, dest, level)?,
+    let effective_dest = match format.as_str() {
+        "illuminati" | "elite" => {
+            let effective = dest.with_extension("illuminati");
+            create_illuminati_archive(source, &effective, level, &password)?;
+            effective
+        }
+        "custom" => {
+            let ext = normalize_custom_extension(custom_extension.as_deref().unwrap_or_default())?;
+            let effective = dest.with_extension(&ext);
+            create_illuminati_archive(source, &effective, level, &password)?;
+            if register_custom {
+                #[cfg(windows)]
+                {
+                    let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                    register_archive_extension(&exe, &format!(".{ext}"));
+                    register_house_file_type(&exe, &format!(".{ext}"));
+                }
+            }
+            effective
+        }
+        "zip" => {
+            let effective = dest.with_extension("zip");
+            create_zip_archive(source, &effective, level)?;
+            effective
+        }
         _ => return Err("Unsupported archive format".to_string()),
-    }
-    let size = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    Ok(format!("Created {} ({} bytes)", dest.to_string_lossy(), size))
+    };
+    let size = std::fs::metadata(&effective_dest).map(|m| m.len()).unwrap_or(0);
+    Ok(format!("Created {} ({} bytes)", effective_dest.to_string_lossy(), size))
 }
 
 #[tauri::command]
@@ -582,46 +635,59 @@ fn reg_delete_key(key: &str) {
 }
 
 #[cfg(windows)]
+fn register_archive_extension(exe: &str, ext: &str) {
+    let verbs = [
+        ("ExtractHere", "Extract here with A Elite Estrangeira", "--extract-here"),
+        ("ExtractToFolder", "Extract to folder with A Elite Estrangeira", "--extract-to"),
+        ("ListArchive", "List with A Elite Estrangeira", "--list"),
+    ];
+    for legacy in ["EliteExtratorHere", "EliteExtratorList", "EliteExtratorToFolder", "EliteExtratorExtractHere", "EliteExtratorExtractToFolder", "EliteExtratorListArchive"] {
+        let legacy_key = format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell\\{legacy}");
+        let _ = std::process::Command::new("reg").args(["delete", &legacy_key, "/f"]).output();
+    }
+    for (verb, label, flag) in verbs {
+        for base in [
+            format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell"),
+            format!("HKCU\\Software\\Classes\\{ext}\\shell"),
+        ] {
+            let key = format!("{base}\\IlluminatiEliteExtractor{verb}");
+            reg_add(&key, None, label);
+            reg_add(&key, Some("MUIVerb"), label);
+            reg_add(&key, Some("Icon"), exe);
+            reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" {flag} \"%1\""));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn register_house_file_type(exe: &str, ext: &str) {
+    let prog_id = "AEliteEstrangeira.IlluminatiArchive";
+    reg_add(&format!("HKCU\\Software\\Classes\\{ext}"), None, prog_id);
+    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}"), None, "Illuminati Archive");
+    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}"), Some("FriendlyTypeName"), "Illuminati Archive");
+    reg_add(&format!("HKCU\\Software\\Classes\\{ext}"), Some("Content Type"), "application/x-illuminati-archive");
+    reg_add(&format!("HKCU\\Software\\Classes\\{ext}"), Some("PerceivedType"), "compressed");
+    reg_add(&format!("HKCU\\Software\\Classes\\{ext}"), Some("AlwaysShowExt"), "");
+    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon"), None, &format!("{exe},0"));
+    reg_add(&format!("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{ext}\\OpenWithProgids"), Some(prog_id), "");
+    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\shell\\open\\command"), None, &format!("\"{exe}\" --list \"%1\""));
+}
+
+#[cfg(windows)]
 fn register_context_menu_inner() {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let exts = [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst", ".tgz", ".elite"];
+    let exts = [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst", ".tgz", ".illuminati", ".elite"];
     let verbs = [
         ("ExtractHere", "Extract here with A Elite Estrangeira", "--extract-here"),
         ("ExtractToFolder", "Extract to folder with A Elite Estrangeira", "--extract-to"),
         ("ListArchive", "List with A Elite Estrangeira", "--list"),
     ];
     for ext in exts {
-        // Remove the legacy v1 verbs so Explorer shows one extractor only.
-        for legacy in ["EliteExtratorHere", "EliteExtratorList", "EliteExtratorToFolder", "EliteExtratorExtractHere", "EliteExtratorExtractToFolder", "EliteExtratorListArchive"] {
-            let legacy_key = format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell\\{legacy}");
-            let _ = std::process::Command::new("reg").args(["delete", &legacy_key, "/f"]).output();
-        }
-        for (verb, label, flag) in verbs {
-            // Register in both association locations Explorer merges for a file
-            // extension, so the verbs show regardless of the default program.
-            for base in [
-                format!("HKCU\\Software\\Classes\\SystemFileAssociations\\{ext}\\shell"),
-                format!("HKCU\\Software\\Classes\\{ext}\\shell"),
-            ] {
-                let key = format!("{base}\\IlluminatiEliteExtractor{verb}");
-                reg_add(&key, None, label);
-                reg_add(&key, Some("MUIVerb"), label);
-                reg_add(&key, Some("Icon"), &exe);
-                reg_add(&format!("{key}\\command"), None, &format!("\"{exe}\" {flag} \"%1\""));
-            }
-        }
+        register_archive_extension(&exe, ext);
     }
-    // .elite files carry the house icon in Explorer, like .rar files do.
-    let prog_id = "AEliteEstrangeira.EliteArchive";
-    reg_add("HKCU\\Software\\Classes\\.elite", None, prog_id);
-    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}"), None, "ELITE Archive");
-    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}"), Some("FriendlyTypeName"), "ELITE Archive");
-    reg_add("HKCU\\Software\\Classes\\.elite", Some("Content Type"), "application/x-elite-archive");
-    reg_add("HKCU\\Software\\Classes\\.elite", Some("PerceivedType"), "compressed");
-    reg_add("HKCU\\Software\\Classes\\.elite", Some("AlwaysShowExt"), "");
-    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\DefaultIcon"), None, &format!("{exe},0"));
-    reg_add("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.elite\\OpenWithProgids", Some(prog_id), "");
-    reg_add(&format!("HKCU\\Software\\Classes\\{prog_id}\\shell\\open\\command"), None, &format!("\"{exe}\" --list \"%1\""));
+    // .illuminati is the primary house format; legacy .elite stays readable.
+    register_house_file_type(&exe, ".illuminati");
+    register_house_file_type(&exe, ".elite");
     // Folder theme: Silver Graphite (no-text version), first theme.
     let _ = folder_theme_icon_path();
     for (base, arg) in [("HKCU\\Software\\Classes\\Directory\\shell", "%1"), ("HKCU\\Software\\Classes\\Directory\\Background\\shell", "%V")] {
@@ -795,7 +861,7 @@ fn needs_window() -> bool {
         if pair[0] == "--add" {
             return true;
         }
-        if (pair[0] == "--extract-here" || pair[0] == "--extract-to") && elite_is_encrypted(Path::new(&pair[1])) {
+        if (pair[0] == "--extract-here" || pair[0] == "--extract-to") && illuminati_is_encrypted(Path::new(&pair[1])) {
             return true;
         }
     }
@@ -862,27 +928,57 @@ mod tests {
     }
 
     #[test]
-    fn elite_roundtrip_and_encrypted() {
-        let dir = temp_dir("elite");
+    fn illuminati_roundtrip_and_encrypted() {
+        let dir = temp_dir("illuminati");
         let src = dir.join("Template");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("hello.txt"), b"hello elite\n").unwrap();
-        let plain = dir.join("Template.elite");
-        create_elite_archive(&src, &plain, 3, "").unwrap();
+        let plain = dir.join("Template.illuminati");
+        create_illuminati_archive(&src, &plain, 3, "").unwrap();
         let listed = list_archive_inner(&plain).unwrap();
         assert!(listed.iter().any(|e| e.name.ends_with("hello.txt")));
+        let legacy = dir.join("Template.elite");
+        std::fs::copy(&plain, &legacy).unwrap();
+        assert!(list_archive_inner(&legacy).unwrap().iter().any(|e| e.name.ends_with("hello.txt")));
         let out = dir.join("out");
         let files = extract_archive_inner(&plain, &out).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(std::fs::read_to_string(out.join("Template/hello.txt")).unwrap(), "hello elite\n");
 
-        let encrypted = dir.join("Secret.elite");
-        create_elite_archive(&src, &encrypted, 3, "correct horse").unwrap();
-        assert!(elite_is_encrypted(&encrypted));
+        let encrypted = dir.join("Secret.illuminati");
+        create_illuminati_archive(&src, &encrypted, 3, "correct horse").unwrap();
+        assert!(illuminati_is_encrypted(&encrypted));
         assert!(extract_archive_inner(&encrypted, &dir.join("nope")).is_err());
         let out2 = dir.join("out2");
         let files2 = extract_archive_inner_with_password(&encrypted, &out2, Some("correct horse")).unwrap();
         assert_eq!(files2.len(), 1);
+    }
+
+    #[test]
+    fn custom_extension_roundtrip_by_magic() {
+        let dir = temp_dir("custom");
+        let src = dir.join("Template");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("hello.txt"), b"hello elite\n").unwrap();
+        let created = create_archive(
+            src.to_string_lossy().to_string(),
+            dir.join("Template").to_string_lossy().to_string(),
+            "custom".to_string(),
+            3,
+            String::new(),
+            Some("vault".to_string()),
+            false,
+        ).unwrap();
+        assert!(created.contains("Template.vault"));
+        let renamed = dir.join("Template.bin");
+        std::fs::rename(dir.join("Template.vault"), &renamed).unwrap();
+        let out = dir.join("out");
+        let files = extract_archive_inner(&renamed, &out).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(normalize_custom_extension("").is_err());
+        assert!(normalize_custom_extension("../x").is_err());
+        assert!(normalize_custom_extension("zip").is_err());
+        assert_eq!(normalize_custom_extension(".Vault").unwrap(), "vault");
     }
 
     #[test]

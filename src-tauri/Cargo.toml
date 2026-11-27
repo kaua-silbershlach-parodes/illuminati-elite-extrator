@@ -1,6 +1,6 @@
 [package]
 name = "illuminati-elite-extractor"
-version = "1.0.0"
+version = "1.0.1"
 description = "Illuminati Elite Extractor: archive extractor for ZIP, 7Z, RAR, TAR and compressed files with signed GitHub auto-updates, by A Elite Estrangeira."
 edition = "2021"
 

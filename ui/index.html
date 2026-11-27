@@ -20,7 +20,8 @@
       <input id="archive-name" type="text">
       <label>Archive format</label>
       <select id="format">
-        <option value="elite" selected>ELITE (.elite) - A Elite Estrangeira</option>
+        <option value="illuminati" selected>Illuminati (.illuminati) - A Elite Estrangeira</option>
+        <option value="custom">Custom extension</option>
         <option value="zip">ZIP (.zip)</option>
       </select>
       <label>Compression level</label>
@@ -28,13 +29,16 @@
         <option value="1">1 - Fast</option>
         <option value="3" selected>3 - Normal</option>
         <option value="9">9 - Maximum</option>
-        <option value="19">19 - Ultra (ELITE)</option>
+        <option value="19">19 - Ultra (Illuminati)</option>
       </select>
-      <label>Password (optional, ELITE only)</label>
+      <label>Custom extension (custom format only)</label>
+      <input id="custom-extension" type="text" placeholder="vault">
+      <label><input id="register-custom" type="checkbox"> Register custom extension in Explorer</label>
+      <label>Password (optional, Illuminati only)</label>
       <input id="password" type="password">
       <label>Reenter password</label>
       <input id="password2" type="password">
-      <p class="hint">ELITE uses Zstandard compression, SHA-256 integrity and AES-256-GCM encryption with Argon2id when a password is set.</p>
+      <p class="hint">Illuminati uses Zstandard compression, SHA-256 integrity and AES-256-GCM encryption with Argon2id when a password is set.</p>
       <div class="actions">
         <button id="btn-create">Create archive</button>
       </div>

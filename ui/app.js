@@ -21,12 +21,14 @@ el('btn-create').addEventListener('click', async () => {
   const password2 = el('password2').value;
   if (!name) { el('status').textContent = 'Enter an archive name.'; return; }
   if (password !== password2) { el('status').textContent = 'Passwords do not match.'; return; }
-  if (format === 'zip' && password) { el('status').textContent = 'Password encryption is available for ELITE format.'; return; }
-  const ext = format === 'elite' ? '.elite' : '.zip';
+  if (format === 'zip' && password) { el('status').textContent = 'Password encryption is available for Illuminati format.'; return; }
+  const customExtension = el('custom-extension').value.trim().replace(/^\./, '').toLowerCase();
+  if (format === 'custom' && !customExtension) { el('status').textContent = 'Enter a custom extension.'; return; }
+  const ext = format === 'illuminati' ? '.illuminati' : (format === 'custom' ? '.' + customExtension : '.zip');
   const dest = ctx.parent + '\\' + name + ext;
   el('status').textContent = 'Creating archive...';
   try {
-    el('status').textContent = await invoke('create_archive', { source: ctx.source, dest, format, level, password });
+    el('status').textContent = await invoke('create_archive', { source: ctx.source, dest, format, level, password, customExtension, registerCustom: el('register-custom').checked });
   } catch (err) {
     el('status').textContent = 'Failed: ' + err;
   }

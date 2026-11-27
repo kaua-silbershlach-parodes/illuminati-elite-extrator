@@ -7,19 +7,22 @@ context menu only — there is no application window to open.
 ## Supported formats
 
 ZIP, JAR, EPUB, Office documents, 7Z, RAR, TAR, TAR.GZ, TAR.BZ2, TAR.XZ,
-TAR.ZST, single-file GZ, BZ2, XZ and ZST, and the house **ELITE**
-format. Detection is by extension with a magic-byte fallback.
-Password-protected ZIP and 7Z archives are not handled; encrypted ELITE
-archives ask for their password.
+TAR.ZST, single-file GZ, BZ2, XZ and ZST, and the house **Illuminati**
+format. Detection checks the Illuminati magic first, then extension
+with a magic-byte fallback. Password-protected ZIP and 7Z archives are
+not handled; encrypted Illuminati archives ask for their password.
 
-## ELITE format
+## Illuminati format
 
-The company archive format (`.elite`):
+The company archive format (`.illuminati`); legacy `.elite` archives
+remain readable:
 
 - TAR payload compressed with Zstandard (levels 1, 3, 9, 19)
 - SHA-256 integrity verified on extraction
 - Optional AES-256-GCM password encryption with Argon2id key derivation
-- `.elite` files carry the house icon and the "ELITE Archive" file type
+- `.illuminati` files carry the house icon and the "Illuminati Archive" file type
+- Custom extension creation writes the same Illuminati container under
+  a user-chosen extension; magic-first detection reopens it
 
 ## Windows context menu
 
@@ -30,7 +33,7 @@ On archive files, on folders, and on folder background:
 - **List with A Elite Estrangeira** — writes a contents text file next
   to the archive and opens it in Notepad
 - **Add to archive with A Elite Estrangeira** — archive name, format
-  (ELITE or ZIP), compression level, and optional password
+  (Illuminati, custom extension, or ZIP), compression level, and optional password
 
 On folders:
 
